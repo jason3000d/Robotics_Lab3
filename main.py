@@ -5,77 +5,86 @@ from pybricks.robotics import DriveBase
 from pybricks.tools import wait, StopWatch
 from urandom import randint
 
+# ----------------------------------------------------------------------------
 # 1. HARDWARE SETUP
+# ----------------------------------------------------------------------------
 hub = PrimeHub()
 
 left_motor = Motor(Port.A, Direction.COUNTERCLOCKWISE)
 right_motor = Motor(Port.B)
-fan_motor = Motor(Port.C)
+try:
+    fan_motor = Motor(Port.C)
+except OSError:
+    fan_motor = None                    # fan not attached -> extinguish skips it
 
 color_sensor = ColorSensor(Port.E)      # facing down
 side_sonar = UltrasonicSensor(Port.D)   # facing right
 bumper = ForceSensor(Port.F)            # facing front
 
-# Measure YOUR wheels (mm) and the distance between wheel centers (mm).
-drive = DriveBase(left_motor, right_motor, wheel_diameter=56, axle_track=112)
+drive = DriveBase(left_motor, right_motor, wheel_diameter=60, axle_track=115)
 try:
-    drive.use_gyro(True)    # more accurate turns (Pybricks 3.3+)
+    drive.use_gyro(True)
 except AttributeError:
     pass
 
-
-# 2. TUNING CONSTANTS  
+# ----------------------------------------------------------------------------
+# 2. TUNING CONSTANTS
+# ----------------------------------------------------------------------------
 LOOP_MS = 20
 
 # Wander
-WANDER_SPEED = 150          # mm/s
-WANDER_TURN_MIN_MS = 1500   # how long to go straight before a random turn
-WANDER_TURN_MAX_MS = 3500
+WANDER_SPEED = 300          # mm/s
+WANDER_TURN_RATE = 60      # deg/s; negative = left (biases robot toward walls on its right)
+WANDER_TURN_MIN_MS = 1000   # how long to go straight before a turn
+WANDER_TURN_MAX_MS = 3000
 
 # Wall follow (wall kept on the RIGHT)
-WALL_TARGET_MM = 100        # desired distance to the wall
-WALL_DETECT_MM = 250        # start following when the wall is this close
-WALL_LOST_MM = 350          # bigger than this = no wall (doorway / outside corner)
-WALL_SPEED = 120
-WALL_KP = 1.2               # deg/s of turn per mm of error
-WALL_MAX_TURN = 90
-LOST_GIVEUP_MS = 2500       # arc right this long looking for the wall, then give up
-MAX_FOLLOW_MS = 20000       # leave the wall eventually so we explore other rooms
-FOLLOW_COOLDOWN_MS = 4000   # ignore walls for a while after leaving one
+WALL_TARGET_MM = 50        # desired distance to the wall
+WALL_DETECT_MM = 100        # start following when the wall is this close
+WALL_LOST_MM = 150          # bigger than this = no wall (doorway / outside corner)
+WALL_SPEED = 200            # mm/s
+WALL_TURN_RATE = 0.3               # degrees of heading offset per mm of distance error
+WALL_MAX_TURN = 60          # deg/s
+LOST_GIVEUP_MS = 4000       # look for a lost wall this long, then give up
+MAX_FOLLOW_MS = 20000       # leave the wall eventually to explore other rooms
+FOLLOW_COOLDOWN_MS = 2000   # ignore walls for a while after leaving one
 
 # Fire detection
-FIRE_COLOR = Color.RED      # set to the paper color that worked best
+FIRE_COLOR = Color.BLACK    # paper color -- make sure the plain floor never reads this!
 FIRE_CONFIRM = 3            # consecutive readings needed (debounce)
-# Restrict what color() can return -> fewer false hits. Add your floor color.
 color_sensor.detectable_colors([Color.RED, Color.BLUE, Color.GREEN,
                                 Color.YELLOW, Color.WHITE, Color.BLACK, Color.NONE])
 
 # Extinguish
-FAN_SPEED = 1000            # deg/s (direction depends on your fan build)
+EXTINGUISH_PASSES = 3
+FAN_SPEED = 1000            # deg/s (flip sign if the fan blows the wrong way)
 SWEEP_ANGLE = 40            # degrees to each side
 SWEEP_PASSES = 3
-APPROACH_MM = 60            # creep forward after detecting paper edge
+APPROACH_MM = 60            # creep forward after detecting the paper edge
 
-
-# 3. SENSOR SNAPSHOT  -- read every sensor ONCE per loop
+# ----------------------------------------------------------------------------
+# 3. SENSOR SNAPSHOT -- read every sensor ONCE per loop
+# ----------------------------------------------------------------------------
 def read_sensors():
     return {
-        "side": side_sonar.distance(),   # mm, 2000 if nothing
-        "bump": bumper.pressed(),
+        "side": side_sonar.distance(),   # mm
+        "bump": bumper.pressed(force=1),
         "color": color_sensor.color(),
     }
 
 
 def alarm():
-    hub.light.on(Color.RED)
-    for _ in range(3):
-        hub.speaker.beep(1500, 200)
-        wait(80)
-        hub.speaker.beep(900, 200)
-        wait(80)
+    hub.light.on(Color.BLUE)
+    triumph = [
+    "C5/16", "C5/16", "C5/16", "C5/4.", "G#4/4.", "A#4/4.",
+    "C5/8", "R/16", "A#4/16", "C5/2"
+]
+    hub.speaker.play(triumph, tempo=140)
 
 
-# 4. BEHAVIORS -- each has active(s) and step(s)
+# ----------------------------------------------------------------------------
+# 4. BEHAVIORS -- active(s): want control?   step(s): one short action
+# ----------------------------------------------------------------------------
 class Behavior:
     name = "base"
 
@@ -92,21 +101,18 @@ class Wander(Behavior):
     def __init__(self):
         self.timer = StopWatch()
         self.next_change = randint(WANDER_TURN_MIN_MS, WANDER_TURN_MAX_MS)
-        self.turn_rate = 0
         self.turning_until = 0
 
     def active(self, s):
-        return True     # lowest priority: always willing
+        return True     # lowest priority: always true
 
     def step(self, s):
         t = self.timer.time()
         if t > self.next_change:
-            # start a short random turn
-            self.turn_rate = randint(-90, 90)
             self.turning_until = t + randint(300, 900)
             self.next_change = t + randint(WANDER_TURN_MIN_MS, WANDER_TURN_MAX_MS)
         if t < self.turning_until:
-            drive.drive(WANDER_SPEED // 2, self.turn_rate)
+            drive.drive(WANDER_SPEED // 2, randint(-WANDER_TURN_RATE, WANDER_TURN_RATE))
         else:
             drive.drive(WANDER_SPEED, 0)
 
@@ -149,11 +155,11 @@ class WallFollow(Behavior):
         d = s["side"]
         if d >= WALL_LOST_MM:
             # Wall disappeared (doorway / outside corner): arc right to wrap around it.
-            drive.drive(WALL_SPEED // 2, 60)
+            drive.drive(WALL_SPEED // 2, 90)
             return
         # P-controller. In Pybricks a POSITIVE turn rate turns RIGHT (clockwise).
         error = d - WALL_TARGET_MM          # >0: too far from wall -> turn right
-        turn = WALL_KP * error
+        turn = WALL_TURN_RATE * error
         turn = max(-WALL_MAX_TURN, min(WALL_MAX_TURN, turn))
         drive.drive(WALL_SPEED, turn)
 
@@ -205,22 +211,27 @@ class Extinguish(Behavior):
         # We only know we're on the paper edge, not where the candle is,
         # so creep in a little and sweep the fan side to side.
         drive.straight(APPROACH_MM)
-        fan_motor.run(FAN_SPEED)
-        for _ in range(SWEEP_PASSES):
-            drive.turn(SWEEP_ANGLE)
-            drive.turn(-2 * SWEEP_ANGLE)
-            drive.turn(SWEEP_ANGLE)
-        fan_motor.stop()
+        for _ in range(EXTINGUISH_PASSES):
+            if fan_motor:
+                fan_motor.run(FAN_SPEED)
+            for _ in range(SWEEP_PASSES):
+                drive.turn(SWEEP_ANGLE)
+                drive.turn(-2 * SWEEP_ANGLE)
+                drive.turn(SWEEP_ANGLE)
+            if fan_motor:
+                fan_motor.stop()
         drive.stop()
         self.world["done"] = True
         print("Extinguish attempt finished. Press LEFT button to retry.")
 
 
+# ----------------------------------------------------------------------------
+# 5. ARBITER -- the main loop
+# ----------------------------------------------------------------------------
 def main():
     world = {"fire_found": False, "done": False}
 
-    # highest priority FIRST
-    behaviors = [               
+    behaviors = [               # highest priority FIRST
         Extinguish(world),
         FireDetect(world),
         Escape(),
@@ -233,7 +244,7 @@ def main():
 
     while True:
         if world["done"]:
-            if Button.LEFT in hub.buttons.pressed():
+            if Button.CENTER in hub.buttons.pressed():
                 world["done"] = False
                 hub.light.on(Color.ORANGE)
                 wait(500)
