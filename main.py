@@ -34,20 +34,25 @@ LOOP_MS = 20
 
 # Wander
 WANDER_SPEED = 300          # mm/s
-WANDER_TURN_RATE = 60      # deg/s; negative = left (biases robot toward walls on its right)
+WANDER_TURN_RATE = -60      # deg/s; negative = left (biases robot toward walls on its right)
 WANDER_TURN_MIN_MS = 1000   # how long to go straight before a turn
 WANDER_TURN_MAX_MS = 3000
 
 # Wall follow (wall kept on the RIGHT)
-WALL_TARGET_MM = 50        # desired distance to the wall
-WALL_DETECT_MM = 100        # start following when the wall is this close
-WALL_LOST_MM = 150          # bigger than this = no wall (doorway / outside corner)
-WALL_SPEED = 200            # mm/s
-WALL_TURN_RATE = 0.3               # degrees of heading offset per mm of distance error
+WALL_SPEED = 300            # mm/s
+WALL_TARGET_MM = 100        # desired distance to the wall
+WALL_DETECT_MM = 150        # start following when the wall is this close
+WALL_LOST_MM = 200          # bigger than this = no wall (doorway / outside corner)
+WALL_LOST_TURN = 45          # deg/s; how fast to turn when the wall is lost
+WALL_TURN_RATE = -0.3               # degrees of heading offset per mm of distance error
 WALL_MAX_TURN = 60          # deg/s
 LOST_GIVEUP_MS = 4000       # look for a lost wall this long, then give up
 MAX_FOLLOW_MS = 20000       # leave the wall eventually to explore other rooms
 FOLLOW_COOLDOWN_MS = 2000   # ignore walls for a while after leaving one
+
+# Escape
+ESCAPE_SPEED = -60          # mm/s
+ESCAPE_TURN_RATE = -60       # deg/s; negative = left (biases robot toward walls on its right)
 
 # Fire detection
 FIRE_COLOR = Color.BLACK    # paper color -- make sure the plain floor never reads this!
@@ -74,16 +79,24 @@ def read_sensors():
 
 
 def alarm():
-    hub.light.on(Color.BLUE)
-    triumph = [
-    "C5/16", "C5/16", "C5/16", "C5/4.", "G#4/4.", "A#4/4.",
-    "C5/8", "R/16", "A#4/16", "C5/2"
-]
-    hub.speaker.play(triumph, tempo=140)
+    # hub.light.on(Color.BLUE)
+    # triumph = [
+    #     "C5/16", "C5/16", "C5/16", "C5/4.", "G#4/4.", "A#4/4.",
+    #     "C5/8", "R/16", "A#4/16", "C5/2"
+    # ]
+    # hub.speaker.play(triumph, tempo=140)
+
+    hub.light.on(Color.RED)
+    for _ in range(3):
+        hub.speaker.beep(1500, 200)
+        wait(80)
+        hub.speaker.beep(900, 200)
+        wait(80)
+
 
 
 # ----------------------------------------------------------------------------
-# 4. BEHAVIORS -- active(s): want control?   step(s): one short action
+# 4. BEHAVIORS
 # ----------------------------------------------------------------------------
 class Behavior:
     name = "base"
@@ -109,10 +122,10 @@ class Wander(Behavior):
     def step(self, s):
         t = self.timer.time()
         if t > self.next_change:
-            self.turning_until = t + randint(300, 900)
+            self.turning_until = t + randint(500, 1000)
             self.next_change = t + randint(WANDER_TURN_MIN_MS, WANDER_TURN_MAX_MS)
         if t < self.turning_until:
-            drive.drive(WANDER_SPEED // 2, randint(-WANDER_TURN_RATE, WANDER_TURN_RATE))
+            drive.drive(WANDER_SPEED // 2, WANDER_TURN_RATE)
         else:
             drive.drive(WANDER_SPEED, 0)
 
@@ -155,12 +168,11 @@ class WallFollow(Behavior):
         d = s["side"]
         if d >= WALL_LOST_MM:
             # Wall disappeared (doorway / outside corner): arc right to wrap around it.
-            drive.drive(WALL_SPEED // 2, 90)
+            drive.drive(WALL_SPEED // 2, WALL_LOST_TURN)
             return
-        # P-controller. In Pybricks a POSITIVE turn rate turns RIGHT (clockwise).
+        # In Pybricks a POSITIVE turn rate turns RIGHT (clockwise).
         error = d - WALL_TARGET_MM          # >0: too far from wall -> turn right
         turn = WALL_TURN_RATE * error
-        turn = max(-WALL_MAX_TURN, min(WALL_MAX_TURN, turn))
         drive.drive(WALL_SPEED, turn)
 
 
@@ -171,11 +183,9 @@ class Escape(Behavior):
         return s["bump"]
 
     def step(self, s):
-        # Hit a wall in front. Back up, turn LEFT so the wall ends up on the RIGHT,
-        # which hands control naturally to WallFollow.
         drive.stop()
-        drive.straight(-60)
-        drive.turn(-90)
+        drive.straight(ESCAPE_SPEED)
+        drive.turn(ESCAPE_TURN_RATE)
 
 
 class FireDetect(Behavior):
@@ -222,7 +232,7 @@ class Extinguish(Behavior):
                 fan_motor.stop()
         drive.stop()
         self.world["done"] = True
-        print("Extinguish attempt finished. Press LEFT button to retry.")
+        print("Extinguish attempt finished. Press CENTER button to retry.")
 
 
 # ----------------------------------------------------------------------------
