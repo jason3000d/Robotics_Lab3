@@ -79,19 +79,19 @@ def read_sensors():
 
 
 def alarm():
-    # hub.light.on(Color.BLUE)
-    # triumph = [
-    #     "C5/16", "C5/16", "C5/16", "C5/4.", "G#4/4.", "A#4/4.",
-    #     "C5/8", "R/16", "A#4/16", "C5/2"
-    # ]
-    # hub.speaker.play(triumph, tempo=140)
+    hub.light.on(Color.BLUE)
+    triumph = [
+        "C5/16", "C5/16", "C5/16", "C5/4.", "G#4/4.", "A#4/4.",
+        "C5/8", "R/16", "A#4/16", "C5/2"
+    ]
+    hub.speaker.play_notes(triumph, tempo=140)
 
-    hub.light.on(Color.RED)
-    for _ in range(3):
-        hub.speaker.beep(1500, 200)
-        wait(80)
-        hub.speaker.beep(900, 200)
-        wait(80)
+    # hub.light.on(Color.RED)
+    # for _ in range(3):
+    #     hub.speaker.beep(1500, 200)
+    #     wait(80)
+    #     hub.speaker.beep(900, 200)
+    #     wait(80)
 
 
 
@@ -220,7 +220,8 @@ class Extinguish(Behavior):
     def step(self, s):
         # We only know we're on the paper edge, not where the candle is,
         # so creep in a little and sweep the fan side to side.
-        drive.straight(APPROACH_MM)
+        drive.straight(-APPROACH_MM)
+        drive.turn(180)
         for _ in range(EXTINGUISH_PASSES):
             if fan_motor:
                 fan_motor.run(FAN_SPEED)
